@@ -13,12 +13,26 @@ from dotenv import load_dotenv
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
 
+import os
+
 # Optional EasyOCR
 try:
     import easyocr
     EASYOCR_AVAILABLE = True
 except:
     EASYOCR_AVAILABLE = False
+
+_EASYOCR_READER = None
+
+# By default, disable GPU for easyocr. Use environment variable to enable.
+USE_EASYOCR_GPU = os.getenv("USE_EASYOCR_GPU", "false").lower() == "true"
+
+# Pre-initialize easyocr reader to trigger model download upfront
+if EASYOCR_AVAILABLE:
+    try:
+        _EASYOCR_READER = easyocr.Reader(['en'], gpu=USE_EASYOCR_GPU)
+    except Exception as e:
+        print(f"EasyOCR initialization error: {e}")
 
 # Google GenAI (Gemini)
 try:
@@ -59,11 +73,13 @@ def ocr_image(image: Image.Image) -> Dict[str, str]:
         text = pytesseract.image_to_string(image, config="--psm 6")
     except:
         text = ""
-    
+
+    # Use optionally pre-initialized easyocr reader using GPU setting
     if EASYOCR_AVAILABLE and len(text.strip()) < 30:
         global _EASYOCR_READER
         if _EASYOCR_READER is None:
-            _EASYOCR_READER = easyocr.Reader(['en'], gpu=False)
+            # fallback: create reader here if not preinitialized (should be rare)
+            _EASYOCR_READER = easyocr.Reader(['en'], gpu=USE_EASYOCR_GPU)
         results = _EASYOCR_READER.readtext(np_image_from_pil(image))
         text = "\n".join([r[1] for r in results])
     ocr_text = text or "[NO TEXT EXTRACTED]"
