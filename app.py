@@ -30,7 +30,15 @@ USE_EASYOCR_GPU = os.getenv("USE_EASYOCR_GPU", "false").lower() == "true"
 # Pre-initialize easyocr reader to trigger model download upfront
 if EASYOCR_AVAILABLE:
     try:
-        _EASYOCR_READER = easyocr.Reader(['en'], gpu=USE_EASYOCR_GPU)
+        # Try initializing with GPU if requested
+        if USE_EASYOCR_GPU:
+            try:
+                _EASYOCR_READER = easyocr.Reader(['en'], gpu=True)
+            except Exception as e_gpu:
+                print(f"EasyOCR GPU init failed. Falling back to CPU. Error: {e_gpu}")
+                _EASYOCR_READER = easyocr.Reader(['en'], gpu=False)
+        else:
+            _EASYOCR_READER = easyocr.Reader(['en'], gpu=False)
     except Exception as e:
         print(f"EasyOCR initialization error: {e}")
 
