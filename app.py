@@ -4,6 +4,10 @@ from transformers import AutoProcessor, LlavaForConditionalGeneration
 from PIL import Image
 from io import BytesIO
 from groq import Groq
+import warnings
+
+# Suppress specific warnings
+warnings.filterwarnings("ignore", message=".*use_container_width.*")
 
 # --------------------------------------------------
 # Model and API Configuration
@@ -12,14 +16,13 @@ from groq import Groq
 def load_model():
     """Load the LLaVA model and processor"""
     model_id = "llava-hf/llava-1.5-7b-hf"
-    processor = AutoProcessor.from_pretrained(model_id)
+    processor = AutoProcessor.from_pretrained(model_id, use_fast=True)
     model = LlavaForConditionalGeneration.from_pretrained(
         model_id,
-        torch_dtype=torch.float16,
+        device_map="auto",
+        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
         low_cpu_mem_usage=True
     )
-    if torch.cuda.is_available():
-        model = model.to('cuda')
     return processor, model
 
 # Check for Groq API Key
@@ -54,7 +57,13 @@ def analyze_image(image, processor, model):
         # Prepare the prompt
         prompt = "USER: <image>\nAnalyze this medical image and provide a detailed description of any visible abnormalities, conditions, or notable features. ASSISTANT:"
         
-        inputs = processor(text=prompt, images=image, return_tensors="pt").to('cuda' if torch.cuda.is_available() else 'cpu')
+        # Process the image and text
+        inputs = processor(
+            text=prompt, 
+            images=image, 
+            return_tensors="pt",
+            padding=True
+        ).to(model.device)
         
         # Generate response
         with torch.no_grad():
@@ -107,7 +116,7 @@ Please provide a detailed diagnosis based on the image analysis and symptoms abo
 # Run diagnosis
 # --------------------------------------------------
 if uploaded_image:
-    st.image(uploaded_image, caption="Uploaded Image", use_container_width=True)
+    st.image(uploaded_image, caption="Uploaded Image", width='stretch')
 
     if st.button("Generate Diagnosis"):
         with st.spinner("Initializing model (this may take a moment)..."):
