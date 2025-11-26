@@ -1,21 +1,26 @@
 import streamlit as st
-import requests
-import base64
-from groq import Groq
-from io import BytesIO
+import torch
+from transformers import AutoProcessor, LlavaForConditionalGeneration
 from PIL import Image
-import json
+from io import BytesIO
+from groq import Groq
 
 # --------------------------------------------------
-# API Configuration
+# Model and API Configuration
 # --------------------------------------------------
-if 'HF_TOKEN' not in st.secrets:
-    st.error("Hugging Face Token not found. Please set it in Streamlit secrets.")
-    st.stop()
-    
-HF_TOKEN = st.secrets['HF_TOKEN']
-# Using a more reliable model endpoint
-HF_API_URL = "https://api-inference.huggingface.co/models/llava-hf/llava-1.5-7b-hf"
+@st.cache_resource
+def load_model():
+    """Load the LLaVA model and processor"""
+    model_id = "llava-hf/llava-1.5-7b-hf"
+    processor = AutoProcessor.from_pretrained(model_id)
+    model = LlavaForConditionalGeneration.from_pretrained(
+        model_id,
+        torch_dtype=torch.float16,
+        low_cpu_mem_usage=True
+    )
+    if torch.cuda.is_available():
+        model = model.to('cuda')
+    return processor, model
 
 # Check for Groq API Key
 if 'GROQ_API_KEY' not in st.secrets:
@@ -43,69 +48,30 @@ Important:
 - You are NOT a doctor.
 - Provide medically accurate, but safe and general explanations."""
 
-def analyze_image(image_bytes):
-    """Analyze image using LLaVA model with detailed error handling"""
-    headers = {
-        "Authorization": f"Bearer {HF_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    
+def analyze_image(image, processor, model):
+    """Analyze image using LLaVA model locally"""
     try:
-        # Convert image to base64
-        image = Image.open(BytesIO(image_bytes))
+        # Prepare the prompt
+        prompt = "USER: <image>\nAnalyze this medical image and provide a detailed description of any visible abnormalities, conditions, or notable features. ASSISTANT:"
         
-        # Convert RGBA to RGB if necessary
-        if image.mode == 'RGBA':
-            background = Image.new('RGB', image.size, (255, 255, 255))
-            background.paste(image, mask=image.split()[3])
-            image = background
-        elif image.mode != 'RGB':
-            image = image.convert('RGB')
+        inputs = processor(text=prompt, images=image, return_tensors="pt").to('cuda' if torch.cuda.is_available() else 'cpu')
         
-        buffered = BytesIO()
-        image.save(buffered, format="JPEG", quality=85)  # Reduce quality to decrease size
-        img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        # Generate response
+        with torch.no_grad():
+            output = model.generate(
+                **inputs,
+                max_new_tokens=200,
+                do_sample=True,
+                temperature=0.7,
+                top_p=0.9
+            )
         
-        # Prepare the payload
-        payload = {
-            "inputs": {
-                "prompt": "Analyze this medical image and provide a detailed description of any visible abnormalities, conditions, or notable features.",
-                "image": f"data:image/jpeg;base64,{img_str}",
-                "max_new_tokens": 200
-            }
-        }
+        # Decode and clean up the response
+        response = processor.decode(output[0][2:], skip_special_tokens=True)
+        return response.split("ASSISTANT:")[-1].strip()
         
-        # Make the API request with timeout
-        response = requests.post(
-            HF_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-        
-        # Check for HTTP errors
-        response.raise_for_status()
-        
-        # Try to parse JSON
-        try:
-            result = response.json()
-            if isinstance(result, list) and len(result) > 0:
-                return result[0].get('generated_text', 'No generated text in response')
-            return str(result)  # Return string representation if not in expected format
-        except ValueError as e:
-            raise Exception(f"Failed to parse JSON response: {str(e)}. Response: {response.text[:200]}")
-            
-    except requests.exceptions.RequestException as e:
-        error_msg = f"Request failed: {str(e)}"
-        if hasattr(e, 'response') and e.response is not None:
-            error_msg += f"\nStatus code: {e.response.status_code}"
-            try:
-                error_msg += f"\nResponse: {e.response.json()}"
-            except:
-                error_msg += f"\nResponse text: {e.response.text[:500]}"
-        raise Exception(error_msg)
     except Exception as e:
-        raise Exception(f"Error processing image: {str(e)}")
+        raise Exception(f"Error analyzing image: {str(e)}")
 
 def generate_diagnosis(image_analysis, symptoms):
     """Generate diagnosis using Groq's API"""
@@ -132,8 +98,7 @@ Please provide a detailed diagnosis based on the image analysis and symptoms abo
         
         if hasattr(chat_completion.choices[0].message, 'content'):
             return chat_completion.choices[0].message.content
-        else:
-            return "Error: Unexpected response format from Groq API"
+        return "Error: Unexpected response format from Groq API"
             
     except Exception as e:
         raise Exception(f"Error generating diagnosis: {str(e)}")
@@ -145,21 +110,22 @@ if uploaded_image:
     st.image(uploaded_image, caption="Uploaded Image", use_container_width=True)
 
     if st.button("Generate Diagnosis"):
-        with st.spinner("Analyzing the medical image..."):
+        with st.spinner("Initializing model (this may take a moment)..."):
             try:
-                image_bytes = uploaded_image.read()
+                # Load model and processor
+                processor, model = load_model()
                 
-                # Show progress
+                # Load and preprocess image
+                image = Image.open(BytesIO(uploaded_image.getvalue())).convert('RGB')
+                
+                # Analyze image
                 with st.spinner("Analyzing image..."):
-                    image_analysis = analyze_image(image_bytes)
+                    image_analysis = analyze_image(image, processor, model)
                     st.session_state['image_analysis'] = image_analysis
                 
                 # Generate diagnosis
                 with st.spinner("Generating diagnosis..."):
-                    result = generate_diagnosis(
-                        image_analysis,
-                        symptoms
-                    )
+                    result = generate_diagnosis(image_analysis, symptoms)
                     st.session_state['diagnosis_result'] = result
                 
                 # Display results
@@ -173,4 +139,4 @@ if uploaded_image:
             except Exception as e:
                 st.error("An error occurred during processing. Please try again.")
                 st.error(f"Error details: {str(e)}")
-                st.info("Tips: Try with a smaller image or check your API keys.")
+                st.info("If the issue persists, try with a different image or check your internet connection.")
