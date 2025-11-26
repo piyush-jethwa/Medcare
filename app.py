@@ -1,5 +1,6 @@
 import streamlit as st
 from groq import Groq
+import base64
 
 # --------------------------------------------------
 # API KEY Configuration
@@ -14,17 +15,8 @@ else:
 
 client = Groq(api_key=GROQ_API_KEY)
 
-# List available models to find the correct one for vision
-st.write("Checking for available Groq models...")
-try:
-    models_response = client.models.list()
-    # The response object is not a simple list, we need to access the data attribute
-    available_models = [model.id for model in models_response.data]
-    st.write("Available models:")
-    st.write(available_models)
-except Exception as e:
-    st.error(f"An error occurred while fetching models: {e}")
-st.stop()
+# Use the LLaVA model for image analysis
+MODEL_NAME = "llava-v1.5-7b-tool-use"
 
 # --------------------------------------------------
 # Title + UI
@@ -57,11 +49,27 @@ Important:
 '''
 
 def generate_diagnosis(image_bytes, symptoms):
-    image_part = {"mime_type": "image/jpeg", "data": image_bytes}
+    base64_image = base64.b64encode(image_bytes).decode('utf-8')
     prompt = f"{AGENT_SYSTEM_PROMPT}\n\nSymptoms reported: {symptoms if symptoms else 'Not provided'}"
 
-    response = model.generate_content([prompt, image_part])
-    return response.text
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        },
+                    },
+                ],
+            }
+        ],
+        model=MODEL_NAME,
+    )
+    return chat_completion.choices[0].message.content
 
 # --------------------------------------------------
 # Run diagnosis
