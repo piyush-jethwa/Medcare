@@ -62,7 +62,14 @@ if uploaded_image:
     st.image(uploaded_image, caption="Uploaded Image", use_column_width=True)
 
     if st.button("Generate Diagnosis"):
-        with st.spinner("Analyzing the medical image..."):
-            result = generate_diagnosis(uploaded_image.read(), symptoms)
-        st.subheader("🩺 Diagnosis Result")
-        st.write(result)
+    with st.spinner("Analyzing the medical image..."):
+        try:
+            image_bytes = uploaded_image.read()
+            result = generate_diagnosis(image_bytes, symptoms)
+            st.subheader("🩺 Diagnosis Result")
+            st.write(result)
+        except Exception as e:
+            if "ResourceExhausted" in str(e):
+                st.error("API quota exceeded. Please check your Google AI Platform billing or wait and try again later.")
+            else:
+                st.error(f"An error occurred: {e}")
