@@ -1,22 +1,26 @@
 import streamlit as st
-import google.generativeai as genai
+import requests
+import base64
+from groq import Groq
 
 # --------------------------------------------------
-# API KEY Configuration
+# API Configuration
 # --------------------------------------------------
-# To deploy on Streamlit Cloud, set the GOOGLE_API_KEY in the secrets.
-# For local development, create a .env file with GOOGLE_API_KEY="your_key".
+# To deploy on Streamlit Cloud, set the HF_TOKEN and GROQ_API_KEY in the secrets.
 
-if 'GOOGLE_API_KEY' in st.secrets:
-    GOOGLE_API_KEY = st.secrets['GOOGLE_API_KEY']
-else:
-    st.error("Google API Key not found. Please set it in Streamlit secrets.")
+# Check for Hugging Face Token
+if 'HF_TOKEN' not in st.secrets:
+    st.error("Hugging Face Token not found. Please set it in Streamlit secrets.")
+    st.stop()
+HF_TOKEN = st.secrets['HF_TOKEN']
+HF_API_URL = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
+
+# Check for Groq API Key
+if 'GROQ_API_KEY' not in st.secrets:
+    st.error("Groq API Key not found. Please set it in Streamlit secrets.")
     st.stop()
 
-genai.configure(api_key=GOOGLE_API_KEY)
-
-# Use the vision model for image analysis
-model = genai.GenerativeModel("gemini-2.5-flash-image")
+groq_client = Groq(api_key=st.secrets['GROQ_API_KEY'])
 
 # --------------------------------------------------
 # Title + UI
@@ -48,13 +52,51 @@ Important:
 - Provide medically accurate, but safe and general explanations.
 '''
 
-def generate_diagnosis(image_bytes, symptoms):
-    image_part = {"mime_type": "image/jpeg", "data": image_bytes}
-    prompt = f"{AGENT_SYSTEM_PROMPT}\n\nSymptoms reported: {symptoms if symptoms else 'Not provided'}"
+def get_image_description(image_bytes):
+    """Get a detailed description of the image using Hugging Face's API."""
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    response = requests.post(HF_API_URL, headers=headers, data=image_bytes)
+    if response.status_code != 200:
+        raise Exception(f"Hugging Face API error: {response.text}")
+    return response.json()[0]['generated_text']
 
-    generation_config = genai.types.GenerationConfig(max_output_tokens=2048)
-    response = model.generate_content([prompt, image_part], generation_config=generation_config)
-    return response.text
+def generate_diagnosis(image_bytes, symptoms):
+    # Get image description from Hugging Face
+    image_description = get_image_description(image_bytes)
+    
+    # Prepare the prompt for Groq
+    prompt = f"""You are an Advanced Medical Image Diagnosis AI Agent.
+    
+    Image Analysis:
+    {image_description}
+    
+    Symptoms reported: {symptoms if symptoms else 'None provided'}
+    
+    Please provide a detailed diagnosis based on the image analysis and symptoms above. Include:
+    1. Possible conditions
+    2. Medical reasoning
+    3. Recommended next steps
+    4. Risk level (Low/Medium/High)
+    
+    Remember:
+    - You are NOT a doctor.
+    - Provide medically accurate, but safe and general explanations.
+    """
+    
+    # Get diagnosis from Groq
+    chat_completion = groq_client.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        model="llama-3.1-8b-instant",
+        temperature=0.7,
+        max_tokens=1024,
+    )
+    
+    return chat_completion.choices[0].message.content
 
 # --------------------------------------------------
 # Run diagnosis
