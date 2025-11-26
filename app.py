@@ -60,7 +60,7 @@ def generate_diagnosis(image_bytes, symptoms):
 # Run diagnosis
 # --------------------------------------------------
 if uploaded_image:
-    st.image(uploaded_image, caption="Uploaded Image", use_column_width=True)
+    st.image(uploaded_image, caption="Uploaded Image", use_container_width=True)
 
     if st.button("Generate Diagnosis"):
         with st.spinner("Analyzing the medical image..."):
