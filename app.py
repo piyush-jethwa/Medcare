@@ -1,22 +1,30 @@
 import streamlit as st
-import google.generativeai as genai
+from groq import Groq
 
 # --------------------------------------------------
 # API KEY Configuration
 # --------------------------------------------------
-# To deploy on Streamlit Cloud, set the GOOGLE_API_KEY in the secrets.
-# For local development, create a .env file with GOOGLE_API_KEY="your_key".
+# To deploy on Streamlit Cloud, set the GROQ_API_KEY in the secrets.
 
-if 'GOOGLE_API_KEY' in st.secrets:
-    GOOGLE_API_KEY = st.secrets['GOOGLE_API_KEY']
+if 'GROQ_API_KEY' in st.secrets:
+    GROQ_API_KEY = st.secrets['GROQ_API_KEY']
 else:
-    st.error("Google API Key not found. Please set it in Streamlit secrets.")
+    st.error("Groq API Key not found. Please set it in Streamlit secrets.")
     st.stop()
 
-genai.configure(api_key=GOOGLE_API_KEY)
+client = Groq(api_key=GROQ_API_KEY)
 
-# Use the vision model for image analysis
-model = genai.GenerativeModel("gemini-2.5-flash-image")
+# List available models to find the correct one for vision
+st.write("Checking for available Groq models...")
+try:
+    models_response = client.models.list()
+    # The response object is not a simple list, we need to access the data attribute
+    available_models = [model.id for model in models_response.data]
+    st.write("Available models:")
+    st.write(available_models)
+except Exception as e:
+    st.error(f"An error occurred while fetching models: {e}")
+st.stop()
 
 # --------------------------------------------------
 # Title + UI
