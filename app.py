@@ -16,7 +16,7 @@ else:
 genai.configure(api_key=GOOGLE_API_KEY)
 
 # Use the vision model for image analysis
-model = genai.GenerativeModel("gemini-pro-vision")
+model = genai.GenerativeModel("gemini-pro")
 
 # --------------------------------------------------
 # Title + UI
