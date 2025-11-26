@@ -13,7 +13,7 @@ if 'HF_TOKEN' not in st.secrets:
     st.stop()
     
 HF_TOKEN = st.secrets['HF_TOKEN']
-HF_API_URL = "https://api-inference.huggingface.co/models/llava-hf/llava-1.5-7b-hf"
+HF_API_URL = "https://router.huggingface.co/models/llava-hf/llava-1.5-7b-hf"
 
 # Check for Groq API Key
 if 'GROQ_API_KEY' not in st.secrets:
@@ -43,7 +43,10 @@ Important:
 
 def analyze_image(image_bytes):
     """Analyze image using LLaVA model"""
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    headers = {
+        "Authorization": f"Bearer {HF_TOKEN}",
+        "Content-Type": "application/json"
+    }
     
     # Convert image to base64
     image = Image.open(BytesIO(image_bytes))
@@ -60,22 +63,48 @@ def analyze_image(image_bytes):
     image.save(buffered, format="JPEG")
     img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
     
-    # Prepare the prompt
-    prompt = "Analyze this medical image and provide a detailed description of any visible abnormalities, conditions, or notable features."
-    
+    # Prepare the payload
     payload = {
         "inputs": {
-            "text": prompt,
-            "image": img_str
+            "prompt": "Analyze this medical image and provide a detailed description of any visible abnormalities, conditions, or notable features.",
+            "image": f"data:image/jpeg;base64,{img_str}",
+            "max_new_tokens": 500
         }
     }
     
-    response = requests.post(HF_API_URL, headers=headers, json=payload)
-    if response.status_code != 200:
-        error_message = response.json().get('error', 'Unknown error')
-        raise Exception(f"Hugging Face API error: {error_message} (Status code: {response.status_code})")
+    try:
+        response = requests.post(HF_API_URL, headers=headers, json=payload)
+        response.raise_for_status()
+        return response.json()[0]['generated_text']
+    except requests.exceptions.HTTPError as http_err:
+        error_msg = response.json().get('error', str(http_err))
+        raise Exception(f"Hugging Face API error: {error_msg} (Status code: {response.status_code})")
+    except Exception as e:
+        raise Exception(f"Error processing the image: {str(e)}")
+
+def generate_diagnosis(image_analysis, symptoms):
+    """Generate diagnosis using Groq's API"""
+    prompt = f"""{AGENT_SYSTEM_PROMPT}
     
-    return response.json()[0]['generated_text']
+Image Analysis:
+{image_analysis}
+
+Symptoms reported: {symptoms if symptoms else 'None provided'}
+
+Please provide a detailed diagnosis based on the image analysis and symptoms above. Include:
+1. Possible conditions
+2. Medical reasoning
+3. Recommended next steps
+4. Risk level (Low/Medium/High)"""
+
+    chat_completion = groq_client.chat.completions.create(
+        messages=[{"role": "user", "content": prompt}],
+        model="llama-3.1-8b-instant",
+        temperature=0.7,
+        max_tokens=1024,
+    )
+    
+    return chat_completion.choices[0].message.content
 
 # --------------------------------------------------
 # Run diagnosis
