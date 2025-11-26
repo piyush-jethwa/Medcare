@@ -15,8 +15,16 @@ else:
 
 client = Groq(api_key=GROQ_API_KEY)
 
-# Use the LLaVA model for image analysis
-MODEL_NAME = "llava-v1.5-7b-tool-use"
+# List available models to find the correct one for vision
+st.write("Checking for available Groq models...")
+try:
+    models_response = client.models.list()
+    available_models = [model.id for model in models_response.data]
+    st.write("Available models:")
+    st.write(available_models)
+except Exception as e:
+    st.error(f"An error occurred while fetching models: {e}")
+st.stop()
 
 # --------------------------------------------------
 # Title + UI
