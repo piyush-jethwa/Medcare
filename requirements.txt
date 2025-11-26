@@ -8,3 +8,6 @@ numpy
 PyMuPDF
 streamlit
 groq
+torch>=2.0.0
+transformers>=4.36.0
+accelerate>=0.20.0
