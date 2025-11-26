@@ -4,6 +4,7 @@ import base64
 from groq import Groq
 from io import BytesIO
 from PIL import Image
+import json
 
 # --------------------------------------------------
 # API Configuration
@@ -13,7 +14,8 @@ if 'HF_TOKEN' not in st.secrets:
     st.stop()
     
 HF_TOKEN = st.secrets['HF_TOKEN']
-HF_API_URL = "https://router.huggingface.co/models/llava-hf/llava-1.5-7b-hf"
+# Using a more reliable model endpoint
+HF_API_URL = "https://api-inference.huggingface.co/models/llava-hf/llava-1.5-7b-hf"
 
 # Check for Groq API Key
 if 'GROQ_API_KEY' not in st.secrets:
@@ -42,50 +44,74 @@ Important:
 - Provide medically accurate, but safe and general explanations."""
 
 def analyze_image(image_bytes):
-    """Analyze image using LLaVA model"""
+    """Analyze image using LLaVA model with detailed error handling"""
     headers = {
         "Authorization": f"Bearer {HF_TOKEN}",
         "Content-Type": "application/json"
     }
     
-    # Convert image to base64
-    image = Image.open(BytesIO(image_bytes))
-    
-    # Convert RGBA to RGB if necessary
-    if image.mode == 'RGBA':
-        background = Image.new('RGB', image.size, (255, 255, 255))
-        background.paste(image, mask=image.split()[3])  # 3 is the alpha channel
-        image = background
-    elif image.mode != 'RGB':
-        image = image.convert('RGB')
-    
-    buffered = BytesIO()
-    image.save(buffered, format="JPEG")
-    img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
-    
-    # Prepare the payload
-    payload = {
-        "inputs": {
-            "prompt": "Analyze this medical image and provide a detailed description of any visible abnormalities, conditions, or notable features.",
-            "image": f"data:image/jpeg;base64,{img_str}",
-            "max_new_tokens": 500
-        }
-    }
-    
     try:
-        response = requests.post(HF_API_URL, headers=headers, json=payload)
+        # Convert image to base64
+        image = Image.open(BytesIO(image_bytes))
+        
+        # Convert RGBA to RGB if necessary
+        if image.mode == 'RGBA':
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            background.paste(image, mask=image.split()[3])
+            image = background
+        elif image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        buffered = BytesIO()
+        image.save(buffered, format="JPEG", quality=85)  # Reduce quality to decrease size
+        img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        
+        # Prepare the payload
+        payload = {
+            "inputs": {
+                "prompt": "Analyze this medical image and provide a detailed description of any visible abnormalities, conditions, or notable features.",
+                "image": f"data:image/jpeg;base64,{img_str}",
+                "max_new_tokens": 200
+            }
+        }
+        
+        # Make the API request with timeout
+        response = requests.post(
+            HF_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+        
+        # Check for HTTP errors
         response.raise_for_status()
-        return response.json()[0]['generated_text']
-    except requests.exceptions.HTTPError as http_err:
-        error_msg = response.json().get('error', str(http_err))
-        raise Exception(f"Hugging Face API error: {error_msg} (Status code: {response.status_code})")
+        
+        # Try to parse JSON
+        try:
+            result = response.json()
+            if isinstance(result, list) and len(result) > 0:
+                return result[0].get('generated_text', 'No generated text in response')
+            return str(result)  # Return string representation if not in expected format
+        except ValueError as e:
+            raise Exception(f"Failed to parse JSON response: {str(e)}. Response: {response.text[:200]}")
+            
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Request failed: {str(e)}"
+        if hasattr(e, 'response') and e.response is not None:
+            error_msg += f"\nStatus code: {e.response.status_code}"
+            try:
+                error_msg += f"\nResponse: {e.response.json()}"
+            except:
+                error_msg += f"\nResponse text: {e.response.text[:500]}"
+        raise Exception(error_msg)
     except Exception as e:
-        raise Exception(f"Error processing the image: {str(e)}")
+        raise Exception(f"Error processing image: {str(e)}")
 
 def generate_diagnosis(image_analysis, symptoms):
     """Generate diagnosis using Groq's API"""
-    prompt = f"""{AGENT_SYSTEM_PROMPT}
-    
+    try:
+        prompt = f"""{AGENT_SYSTEM_PROMPT}
+        
 Image Analysis:
 {image_analysis}
 
@@ -97,14 +123,20 @@ Please provide a detailed diagnosis based on the image analysis and symptoms abo
 3. Recommended next steps
 4. Risk level (Low/Medium/High)"""
 
-    chat_completion = groq_client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt}],
-        model="llama-3.1-8b-instant",
-        temperature=0.7,
-        max_tokens=1024,
-    )
-    
-    return chat_completion.choices[0].message.content
+        chat_completion = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.1-8b-instant",
+            temperature=0.7,
+            max_tokens=1024,
+        )
+        
+        if hasattr(chat_completion.choices[0].message, 'content'):
+            return chat_completion.choices[0].message.content
+        else:
+            return "Error: Unexpected response format from Groq API"
+            
+    except Exception as e:
+        raise Exception(f"Error generating diagnosis: {str(e)}")
 
 # --------------------------------------------------
 # Run diagnosis
@@ -117,17 +149,28 @@ if uploaded_image:
             try:
                 image_bytes = uploaded_image.read()
                 
-                # Step 1: Analyze image with LLaVA
+                # Show progress
                 with st.spinner("Analyzing image..."):
                     image_analysis = analyze_image(image_bytes)
+                    st.session_state['image_analysis'] = image_analysis
                 
-                # Step 2: Generate diagnosis with Groq
+                # Generate diagnosis
                 with st.spinner("Generating diagnosis..."):
-                    result = generate_diagnosis(image_analysis, symptoms)
+                    result = generate_diagnosis(
+                        image_analysis,
+                        symptoms
+                    )
+                    st.session_state['diagnosis_result'] = result
                 
+                # Display results
                 st.subheader("🩺 Diagnosis Result")
                 st.write(result)
                 
+                # Show raw analysis in expander
+                with st.expander("View Detailed Analysis"):
+                    st.text_area("Image Analysis", image_analysis, height=200)
+                
             except Exception as e:
-                st.error(f"An error occurred: {str(e)}")
-                st.error("Please check your API keys and try again. If the issue persists, the model might be temporarily unavailable.")
+                st.error("An error occurred during processing. Please try again.")
+                st.error(f"Error details: {str(e)}")
+                st.info("Tips: Try with a smaller image or check your API keys.")
