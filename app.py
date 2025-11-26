@@ -1,27 +1,27 @@
 import streamlit as st
-from groq import Groq
-import base64
+import google.generativeai as genai
 
 # --------------------------------------------------
 # API KEY Configuration
 # --------------------------------------------------
-# To deploy on Streamlit Cloud, set the GROQ_API_KEY in the secrets.
+# To deploy on Streamlit Cloud, set the GOOGLE_API_KEY in the secrets.
+# For local development, create a .env file with GOOGLE_API_KEY="your_key".
 
-if 'GROQ_API_KEY' in st.secrets:
-    GROQ_API_KEY = st.secrets['GROQ_API_KEY']
+if 'GOOGLE_API_KEY' in st.secrets:
+    GOOGLE_API_KEY = st.secrets['GOOGLE_API_KEY']
 else:
-    st.error("Groq API Key not found. Please set it in Streamlit secrets.")
+    st.error("Google API Key not found. Please set it in Streamlit secrets.")
     st.stop()
 
-client = Groq(api_key=GROQ_API_KEY)
+genai.configure(api_key=GOOGLE_API_KEY)
 
-# Use the LLaVA model for image analysis
-MODEL_NAME = "llama-3.3-70b-versatile"
+# Use the vision model for image analysis
+model = genai.GenerativeModel("gemini-2.5-flash-image")
 
 # --------------------------------------------------
 # Title + UI
 # --------------------------------------------------
-st.title("🧠 Medical Image Diagnosis AI Agent")
+st.title("Medical Image diagnosis AI Agent")
 st.write("Upload a medical image and get detailed diagnostic insights using an advanced AI Agent.")
 
 uploaded_image = st.file_uploader("Upload an X-ray / MRI / CT image", type=["png", "jpg", "jpeg"])
@@ -32,7 +32,7 @@ symptoms = st.text_area("Describe symptoms (optional)", placeholder="Fever, ches
 # Agent Prompt
 # --------------------------------------------------
 AGENT_SYSTEM_PROMPT = '''
-You are an Advanced Medical Image Diagnosis AI Agent.
+You are an Advanced Medical Image diagnosis AI Agent.
 
 Your role:
 - Analyze medical images
@@ -41,7 +41,7 @@ Your role:
 - Provide medical reasoning step-by-step
 - Identify abnormalities
 - Suggest further tests
-- Provide risk level (Low / Medium / High)
+- Provide risk level (low / Medium / High)
 
 Important:
 - You are NOT a doctor.
@@ -49,27 +49,11 @@ Important:
 '''
 
 def generate_diagnosis(image_bytes, symptoms):
-    base64_image = base64.b64encode(image_bytes).decode('utf-8')
+    image_part = {"mime_type": "image/jpeg", "data": image_bytes}
     prompt = f"{AGENT_SYSTEM_PROMPT}\n\nSymptoms reported: {symptoms if symptoms else 'Not provided'}"
 
-    chat_completion = client.chat.completions.create(
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        },
-                    },
-                ],
-            }
-        ],
-        model=MODEL_NAME,
-    )
-    return chat_completion.choices[0].message.content
+    response = model.generate_content([prompt, image_part])
+    return response.text
 
 # --------------------------------------------------
 # Run diagnosis
