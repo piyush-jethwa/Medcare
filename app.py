@@ -47,6 +47,15 @@ def analyze_image(image_bytes):
     
     # Convert image to base64
     image = Image.open(BytesIO(image_bytes))
+    
+    # Convert RGBA to RGB if necessary
+    if image.mode == 'RGBA':
+        background = Image.new('RGB', image.size, (255, 255, 255))
+        background.paste(image, mask=image.split()[3])  # 3 is the alpha channel
+        image = background
+    elif image.mode != 'RGB':
+        image = image.convert('RGB')
+    
     buffered = BytesIO()
     image.save(buffered, format="JPEG")
     img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
@@ -63,33 +72,10 @@ def analyze_image(image_bytes):
     
     response = requests.post(HF_API_URL, headers=headers, json=payload)
     if response.status_code != 200:
-        raise Exception(f"Hugging Face API error: {response.text}")
+        error_message = response.json().get('error', 'Unknown error')
+        raise Exception(f"Hugging Face API error: {error_message} (Status code: {response.status_code})")
     
     return response.json()[0]['generated_text']
-
-def generate_diagnosis(image_analysis, symptoms):
-    """Generate diagnosis using Groq's API"""
-    prompt = f"""{AGENT_SYSTEM_PROMPT}
-    
-Image Analysis:
-{image_analysis}
-
-Symptoms reported: {symptoms if symptoms else 'None provided'}
-
-Please provide a detailed diagnosis based on the image analysis and symptoms above. Include:
-1. Possible conditions
-2. Medical reasoning
-3. Recommended next steps
-4. Risk level (Low/Medium/High)"""
-
-    chat_completion = groq_client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt}],
-        model="llama-3.1-8b-instant",
-        temperature=0.7,
-        max_tokens=1024,
-    )
-    
-    return chat_completion.choices[0].message.content
 
 # --------------------------------------------------
 # Run diagnosis
