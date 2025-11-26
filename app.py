@@ -15,7 +15,14 @@ else:
 
 genai.configure(api_key=GOOGLE_API_KEY)
 
-# Use the vision model for image analysis
+# List available models to find the correct one for vision
+st.write("Checking for available models...")
+available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+st.write("Available models supporting content generation:")
+st.write(available_models)
+st.stop()
+
+# The line below is now temporarily unreachable
 model = genai.GenerativeModel("gemini-pro")
 
 # --------------------------------------------------
