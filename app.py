@@ -52,7 +52,8 @@ def generate_diagnosis(image_bytes, symptoms):
     image_part = {"mime_type": "image/jpeg", "data": image_bytes}
     prompt = f"{AGENT_SYSTEM_PROMPT}\n\nSymptoms reported: {symptoms if symptoms else 'Not provided'}"
 
-    response = model.generate_content([prompt, image_part])
+    generation_config = genai.types.GenerationConfig(max_output_tokens=2048)
+    response = model.generate_content([prompt, image_part], generation_config=generation_config)
     return response.text
 
 # --------------------------------------------------
