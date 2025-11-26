@@ -2,18 +2,18 @@ import streamlit as st
 import requests
 import base64
 from groq import Groq
+from io import BytesIO
+from PIL import Image
 
 # --------------------------------------------------
 # API Configuration
 # --------------------------------------------------
-# To deploy on Streamlit Cloud, set the HF_TOKEN and GROQ_API_KEY in the secrets.
-
-# Check for Hugging Face Token
 if 'HF_TOKEN' not in st.secrets:
     st.error("Hugging Face Token not found. Please set it in Streamlit secrets.")
     st.stop()
+    
 HF_TOKEN = st.secrets['HF_TOKEN']
-HF_API_URL = "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large"
+HF_API_URL = "https://api-inference.huggingface.co/models/llava-hf/llava-1.5-7b-hf"
 
 # Check for Groq API Key
 if 'GROQ_API_KEY' not in st.secrets:
@@ -23,74 +23,67 @@ if 'GROQ_API_KEY' not in st.secrets:
 groq_client = Groq(api_key=st.secrets['GROQ_API_KEY'])
 
 # --------------------------------------------------
-# Title + UI
+# UI
 # --------------------------------------------------
-st.title("Medical Image diagnosis AI Agent")
+st.title("Medical Image Diagnosis AI Agent")
 st.write("Upload a medical image and get detailed diagnostic insights using an advanced AI Agent.")
 
 uploaded_image = st.file_uploader("Upload an X-ray / MRI / CT image", type=["png", "jpg", "jpeg"])
-
 symptoms = st.text_area("Describe symptoms (optional)", placeholder="Fever, chest pain, coughing...")
 
-# --------------------------------------------------
-# Agent Prompt
-# --------------------------------------------------
-AGENT_SYSTEM_PROMPT = '''
-You are an Advanced Medical Image diagnosis AI Agent.
-
-Your role:
-- Analyze medical images
-- Give detailed diagnosis
-- Mention possible conditions
-- Provide medical reasoning step-by-step
-- Identify abnormalities
-- Suggest further tests
-- Provide risk level (low / Medium / High)
+AGENT_SYSTEM_PROMPT = """You are an Advanced Medical Image Diagnosis AI Agent. Your task is to analyze medical images and provide:
+- Possible conditions
+- Medical reasoning
+- Recommended next steps
+- Risk level (Low/Medium/High)
 
 Important:
 - You are NOT a doctor.
-- Provide medically accurate, but safe and general explanations.
-'''
+- Provide medically accurate, but safe and general explanations."""
 
-def get_image_description(image_bytes):
-    """Get a detailed description of the image using Hugging Face's API."""
+def analyze_image(image_bytes):
+    """Analyze image using LLaVA model"""
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    response = requests.post(HF_API_URL, headers=headers, data=image_bytes)
+    
+    # Convert image to base64
+    image = Image.open(BytesIO(image_bytes))
+    buffered = BytesIO()
+    image.save(buffered, format="JPEG")
+    img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
+    
+    # Prepare the prompt
+    prompt = "Analyze this medical image and provide a detailed description of any visible abnormalities, conditions, or notable features."
+    
+    payload = {
+        "inputs": {
+            "text": prompt,
+            "image": img_str
+        }
+    }
+    
+    response = requests.post(HF_API_URL, headers=headers, json=payload)
     if response.status_code != 200:
         raise Exception(f"Hugging Face API error: {response.text}")
+    
     return response.json()[0]['generated_text']
 
-def generate_diagnosis(image_bytes, symptoms):
-    # Get image description from Hugging Face
-    image_description = get_image_description(image_bytes)
+def generate_diagnosis(image_analysis, symptoms):
+    """Generate diagnosis using Groq's API"""
+    prompt = f"""{AGENT_SYSTEM_PROMPT}
     
-    # Prepare the prompt for Groq
-    prompt = f"""You are an Advanced Medical Image Diagnosis AI Agent.
-    
-    Image Analysis:
-    {image_description}
-    
-    Symptoms reported: {symptoms if symptoms else 'None provided'}
-    
-    Please provide a detailed diagnosis based on the image analysis and symptoms above. Include:
-    1. Possible conditions
-    2. Medical reasoning
-    3. Recommended next steps
-    4. Risk level (Low/Medium/High)
-    
-    Remember:
-    - You are NOT a doctor.
-    - Provide medically accurate, but safe and general explanations.
-    """
-    
-    # Get diagnosis from Groq
+Image Analysis:
+{image_analysis}
+
+Symptoms reported: {symptoms if symptoms else 'None provided'}
+
+Please provide a detailed diagnosis based on the image analysis and symptoms above. Include:
+1. Possible conditions
+2. Medical reasoning
+3. Recommended next steps
+4. Risk level (Low/Medium/High)"""
+
     chat_completion = groq_client.chat.completions.create(
-        messages=[
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
+        messages=[{"role": "user", "content": prompt}],
         model="llama-3.1-8b-instant",
         temperature=0.7,
         max_tokens=1024,
@@ -108,11 +101,18 @@ if uploaded_image:
         with st.spinner("Analyzing the medical image..."):
             try:
                 image_bytes = uploaded_image.read()
-                result = generate_diagnosis(image_bytes, symptoms)
+                
+                # Step 1: Analyze image with LLaVA
+                with st.spinner("Analyzing image..."):
+                    image_analysis = analyze_image(image_bytes)
+                
+                # Step 2: Generate diagnosis with Groq
+                with st.spinner("Generating diagnosis..."):
+                    result = generate_diagnosis(image_analysis, symptoms)
+                
                 st.subheader("🩺 Diagnosis Result")
                 st.write(result)
+                
             except Exception as e:
-                if "ResourceExhausted" in str(e):
-                    st.error("API quota exceeded. Please check your Google AI Platform billing or wait and try again later.")
-                else:
-                    st.error(f"An error occurred: {e}")
+                st.error(f"An error occurred: {str(e)}")
+                st.error("Please check your API keys and try again. If the issue persists, the model might be temporarily unavailable.")
