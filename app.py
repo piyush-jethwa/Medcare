@@ -4,7 +4,7 @@ import google.generativeai as genai
 # --------------------------------------------------
 # HARD-CODED API KEY (user should replace)
 # --------------------------------------------------
-GOOGLE_API_KEY = "AIzaSyA1MTNB7ZY-VoZjhl1r0207M9Cze0oen5k"
+GOOGLE_API_KEY = "AIzaSyCQ06nRZk1F-FkEm5HmM6QTcYTT5WKi6Lg"
 genai.configure(api_key=GOOGLE_API_KEY)
 
 model = genai.GenerativeModel("gemini-2.5-pro")
